@@ -1,0 +1,6 @@
+build
+*.log
+*.cache
+aptcache
+.DS_Store
+

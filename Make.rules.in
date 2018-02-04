@@ -1,0 +1,22 @@
+#
+# Makerules for autoconf.
+# @configure_input@
+
+
+# variables set from automake
+package        = @PACKAGE_NAME@
+version        = @PACKAGE_VERSION@
+tarname        = @PACKAGE_TARNAME@
+distdir        = $(tarname)-$(version)
+
+abs_top_builddir = @abs_top_builddir@
+abs_top_srcdir = @abs_top_srcdir@
+prefix         = @prefix@
+exec_prefix    = @exec_prefix@
+bindir         = @bindir@
+
+TOP_DIR=${abs_top_srcdir}
+BUILD_DIR=${prefix}
+
+
+
