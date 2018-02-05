@@ -51,16 +51,54 @@ def dbg(self, text):
 def whoami(self):
     print("{}::{}".format(type(self).__name__, inspect.stack()[1][3]));
 
+""" dependecy graph stuff
+"""    
+
+class DebPkgItem: 
+    """ individual packagae item.
+    """
+    def __init__(self, url, pkgInfo):
+        self.data = pkgInfo;
+        self.name = pkgInfo['Package']
+        self.depends = [];
+        self.url = url;
+        if 'Depends' in pkgInfo:
+            for d in pkgInfo['Depends'].split(','):  # extract the version list
+                s = re.search('^(\S+).*', d);
+                if (s is not None):
+                    self.depends.append(s.group(1))
+                
+        
+    def __repr__(self):
+        return self.__class__.__name__ + ": " + pp.pformat(vars(self))
+    
+    def getPkgFileName(self):
+        return(self.data['Filename'])
+    
+    def getUrl(self):
+        return(self.url)
+
+    
+
 class DebPkg:
     """ package record for an individual packaghe name.
         contained an order dictionary of version numbers.
     """
     def __init__(self):
         self.versions = collections.OrderedDict();
+        
     def __repr__(self):
         return self.__class__.__name__ + ": " + pp.pformat(vars(self))
     
-     
+    def addPkgVersion(self, url, pkgInfo):
+        version=pkgInfo['Version']
+        self.versions[version] = DebPkgItem(url, pkgInfo);
+    def getLastVersion(self):
+        key = next(reversed(self.versions));    
+        return(self.versions[key])
+    
+        
+
     
 class DebDb:
     """ PackageDb -- live package db, indexed by package name
@@ -71,24 +109,27 @@ class DebDb:
     def __repr__(self):
         return self.__class__.__name__ + ": " + pp.pformat(vars(self))
     
-    def addPackage(self, pkg):
+    def addPackage(self, url, pkg):
         """ add a package
         """
         # to do more error handling here... maybe...
         pkgName=pkg['Package'];
-        pkgVersion=pkg['Version']
         if (not pkgName in self.db):
             p = self.db[pkgName] = DebPkg();
         else:
             p = self.db[pkgName];
-        p.versions[pkgVersion] = pkg
+        p.addPkgVersion(url, pkg)
         #dbg(self, '{}: version={}'.format(pkgName, pkgVersion))
         
     def getPackage(self, name, version=None):
         """ getPackage -- get the package information dictionary.
             given the package name and an optional version number.
             """
-        pass;
+        assert version is None, "specific versions not supported";
+        
+        p = self.db[name];
+        return(p.getLastVersion())
+
     
 
 class AptRepo:
@@ -109,8 +150,8 @@ class AptRepo:
         assert len(t) >= 4, 'too few tokens in line: {}'.format(line)
         assert t[0] in ['deb', 'deb-src'], 'invalid type in line: {}'.format(line)
         self.type=t[0];
-        self.urlStr=t[1];  
-        self.url=urllib.parse.urlparse(self.urlStr) # parsed url..
+        self.__url=t[1];  
+        self.url=urllib.parse.urlparse(self.__url) # parsed url..
         self.urlDir=self.url.netloc + self.url.path;
         self.suite=t[2];
         self.components = t[3:];
@@ -138,6 +179,8 @@ class AptRepo:
                self.suite + '/' + 
                component + '/' + 
                self.getDistDir(arch) + '/Packages')
+    def getUrl(self):
+        return(self.__url);
 
 class AptInstall:
     """ AptInstall
@@ -149,7 +192,6 @@ class AptInstall:
         self.debDb = DebDb();
         self.chkCacheDir()
         self.readAptDir()
-        
     
     def chkCacheDir(self):
         if (not os.path.isdir(self.args.cache)):
@@ -209,7 +251,7 @@ class AptInstall:
                 with open(pkgCache, 'w') as f:
                     f.write(pkgData);
                     
-    def readPackagesFile(self, filename):
+    def readPackagesFile(self, url, filename):
         """ read the repo packages file and store in the packages db.
         """
         lnum=0;
@@ -222,7 +264,7 @@ class AptInstall:
                     if (len(pkgInfo) > 0):
                         #dbg(self, pp.pformat(pkgInfo));
                         # todo, put the package info into the proper record
-                        self.debDb.addPackage(pkgInfo);
+                        self.debDb.addPackage(url, pkgInfo);
                        
                     lastKey=None;
                     pkgInfo={};   # clear out the previous rec...
@@ -230,7 +272,7 @@ class AptInstall:
                 line = line.rstrip();  # remove trailing data.
                 if (line[0] == ' '):
                     if (lastKey is not None):
-                        pkgInfo[key] = line[1:]
+                        pkgInfo[lastKey] = line[1:]
                     continue   # continuation line...
                 s=re.search('^(\S+): (.*)$', line);
                 if (s is None):
@@ -238,15 +280,13 @@ class AptInstall:
                     if (s == None):
                         dbg(self, "InvalidRecord: {}: {}".format(lnum,line))
                         continue;
-                    (key) = s.groups(); value=""
+                    (key) = s.groups(); val=""
                 else:
                     (key, val) = s.groups();
                 #dbg(self, pp.pformat(s.groups()))
                 pkgInfo[key] = val;
 
-    def install(self):
-        """ install -- process the install step
-            """
+    def readAllRepos(self):
         # check for package directories, if there are any missing, then
         # bail for starters (same as apt-install).... 
         # we may want to make this automatic...
@@ -264,8 +304,55 @@ class AptInstall:
             for c in r.components:
                 pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
                 dbg(self, 'reading: ' + pkgCache)
-                self.readPackagesFile(pkgCache)
+                self.readPackagesFile(r.getUrl(), pkgCache)
         #dbg(self, self.debDb)
+
+    def topoDecend(self, pkg, visited):
+        """ the recursive guts of the topological decent
+            alogrithm
+            """
+        #dbg(self, 'pkg={}'.format(pkg))
+        if pkg in visited:
+            return([]);
+        visited[pkg] = True;
+    
+        pkgList = [];
+        debPkg  = self.debDb.getPackage(pkg);
+        for p in debPkg.depends:
+            pkgList.extend(self.topoDecend(p, visited));
+        pkgList.append(pkg)  
+        return(pkgList)
+        
+            
+    def topoSortPkgs(self, pkg, visited):
+        """ perform a topplogical digraph network sort
+            on the top level package and return a list of package names
+            to sort.
+            """
+        return(self.topoDecend(pkg, visited))
+        
+    def buildInstallList(self, pkgList):
+        """ BuildInstallLIst -- build a list of packages to install.
+            """
+        visited={};  # names of packages already visited.
+        insPkgList=[];
+        for pkg in pkgList:
+            insPkgList.extend(self.topoSortPkgs(pkg, visited))
+        return(insPkgList);
+          
+        
+    def install(self, pkgList):
+        """ install -- process the install step
+            """
+        self.readAllRepos();
+        pkgInstallOrder = self.buildInstallList(pkgList);
+        
+        for pkg in pkgInstallOrder:
+            debPkg=self.debDb.getPackage(pkg);
+            dbg(self, "install {}{}".format(debPkg.getUrl(),debPkg.getPkgFileName()))
+            # next steps, download the files, 
+            # then install the files where they belong
+        
                 
 
 def main():
@@ -297,6 +384,13 @@ def main():
                         dest='cache',
                          help="cache directory to use", 
                          default="aptcache")
+    parser.add_argument('-f', '--file', 
+                         help="file containing packages to install", 
+                         dest='pkgsfile',
+                         default=None)
+    parser.add_argument('pkglist', metavar='"TEXT"', nargs='*',  # positional args
+                    help='packages to install')
+    
 
     try:
         args=parser.parse_args(sys.argv[1:])
@@ -305,12 +399,17 @@ def main():
         parser.print_help();
         return(1)   
 
+    pkgList=args.pkglist;
+    if (args.pkgsfile is not None):
+        pkgList.extend(open(args.pkgsfile).readlines());
+    
+    
     
     aptInstall=AptInstall(args);
     if (args.update):
         aptInstall.update();
     if (not args.noinstall):
-        aptInstall.install();
+        aptInstall.install(pkgList);
     
     return(0)
     
