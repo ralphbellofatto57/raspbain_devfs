@@ -21,10 +21,10 @@ AC_INIT(raspbian_devfs, version-0.1)
 AC_MSG_NOTICE([Hello, world.])
 
 # apt get does not appear to have a redirect method...
-#AC_CHECK_PROG(APT_GET_CHECK,apt-get,yes)
-#if test x"$APT_GET_CHECK" != x"yes" ; then
-#    AC_MSG_ERROR([apt-get is required to make this program work.])
-#fi
+AC_CHECK_PROG(APT_GET_CHECK,python3,yes)
+if test x"$APT_GET_CHECK" != x"yes" ; then
+    AC_MSG_ERROR([apt-get is required to make this program work.])
+fi
 
 #AC_CHECK_PROG(APT_GET_CHEC7,apt-get,yes)
 #if test x"$APT_GET_CHECK" != x"yes" ; then

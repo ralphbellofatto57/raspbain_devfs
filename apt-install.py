@@ -140,6 +140,7 @@ class AptRepo:
     def __init__(self, line):
         self.line = ""; # raw repository line.
         self.parseLine(line)
+        self.verbose=False;
         
     def __repr__(self):
        return self.__class__.__name__ + ": " + pp.pformat(vars(self))
@@ -193,6 +194,9 @@ class AptInstall:
         self.debDb = DebDb();
         self.chkCacheDir()
         self.readAptDir()
+
+    def setVerbose(self, verbose):
+        self.verbose=verbose;
     
     def runCmd(self, cmd):
         """ python run command
@@ -210,7 +214,7 @@ class AptInstall:
     
     def chkCacheDir(self):
         if (not os.path.isdir(self.args.cache)):
-            os.mkdir(self.args.cache)
+            os.makedirs(self.args.cache)
     
         
     def findAptListFiles(self,aptdir):
@@ -301,7 +305,7 @@ class AptInstall:
             #dbg(self, r)
             for c in r.components:
                 pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
-                if (self.args.verbose):
+                if (self.verbose):
                     print('reading: ' + pkgCache)
                 self.readPackagesFile(r, pkgCache)
         #dbg(self, self.debDb)
@@ -365,7 +369,7 @@ class AptInstall:
                 pkgUrl = r.packagesUrl(c, self.args.arch);
                 
 
-                if (self.args.verbose):
+                if (self.verbose):
                     print('downloading: {}'.format(pkgUrl));
                 if self.args.simulate:
                     continue;
@@ -417,14 +421,8 @@ class AptInstall:
                     f.write(d);
                 u.close();
                 f.close();
-        
-            dbg(self, "TODO: install {}  {}".format(pkgUrl, pkgFile));
-            #tarObj = tarfile.open(pkgFile, mode="r:");
-            #dbg(self, "tarObj={}".format(pp.pformat(tarObj)))
-            # debian packages are in AR format.
 
             tmpDir = tempfile.TemporaryDirectory();
-            #dbg(self, 'tempDir.name={}'.format(tempDir.name))
             self.unarchive(pkgFile, tmpDir.name)
             
             #glob the data*.file, 
@@ -466,6 +464,10 @@ def main():
                         dest='update', 
                         help="update packages cache", 
                         action='store_true')
+    parser.add_argument('--noinstall', 
+                        dest='noinstall', 
+                        help="don't install, usually combined with 'update'", 
+                        action='store_true')
     parser.add_argument('-s', '--simulate', 
                         dest='simulate',
                         help="No action. Perform a simulation of events that would occur but do not actually change the system",
@@ -488,7 +490,7 @@ def main():
                          help="file containing packages to install", 
                          dest='pkgsfile',
                          default=None)
-    parser.add_argument('pkglist', metavar='"TEXT"', nargs='*',  # positional args
+    parser.add_argument('pkglist', metavar='"pkg"', nargs='*',  # positional args
                     help='packages to install')
     
 
@@ -498,6 +500,7 @@ def main():
         print("argument exception:");
         return(1)
 
+    #print(pp.pformat(vars(args)))
     if (args.help):
         parser.print_help();
         return(1)
@@ -508,9 +511,12 @@ def main():
     
        
     aptInstall=AptInstall(args);
+    
+    aptInstall.setVerbose(args.verbose | args.simulate)
     if (args.update):
         aptInstall.update();
-    aptInstall.install(pkgList);
+    if (not args.noinstall):
+        aptInstall.install(pkgList);
     
     return(0)
     
