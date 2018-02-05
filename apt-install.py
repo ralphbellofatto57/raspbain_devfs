@@ -57,11 +57,11 @@ def whoami(self):
 class DebPkgItem: 
     """ individual packagae item.
     """
-    def __init__(self, url, pkgInfo):
+    def __init__(self, repo, pkgInfo):
         self.data = pkgInfo;
         self.name = pkgInfo['Package']
         self.depends = [];
-        self.url = url;
+        self.repo = repo;
         if 'Depends' in pkgInfo:
             for d in pkgInfo['Depends'].split(','):  # extract the version list
                 s = re.search('^(\S+).*', d);
@@ -76,7 +76,7 @@ class DebPkgItem:
         return(self.data['Filename'])
     
     def getUrl(self):
-        return(self.url)
+        return(self.repo.getUrl())
 
     
 
@@ -90,9 +90,9 @@ class DebPkg:
     def __repr__(self):
         return self.__class__.__name__ + ": " + pp.pformat(vars(self))
     
-    def addPkgVersion(self, url, pkgInfo):
+    def addPkgVersion(self, repo, pkgInfo):
         version=pkgInfo['Version']
-        self.versions[version] = DebPkgItem(url, pkgInfo);
+        self.versions[version] = DebPkgItem(repo, pkgInfo);
     def getLastVersion(self):
         key = next(reversed(self.versions));    
         return(self.versions[key])
@@ -109,7 +109,7 @@ class DebDb:
     def __repr__(self):
         return self.__class__.__name__ + ": " + pp.pformat(vars(self))
     
-    def addPackage(self, url, pkg):
+    def addPackage(self, repo, pkg):
         """ add a package
         """
         # to do more error handling here... maybe...
@@ -118,7 +118,7 @@ class DebDb:
             p = self.db[pkgName] = DebPkg();
         else:
             p = self.db[pkgName];
-        p.addPkgVersion(url, pkg)
+        p.addPkgVersion(repo, pkg)
         #dbg(self, '{}: version={}'.format(pkgName, pkgVersion))
         
     def getPackage(self, name, version=None):
@@ -251,7 +251,7 @@ class AptInstall:
                 with open(pkgCache, 'w') as f:
                     f.write(pkgData);
                     
-    def readPackagesFile(self, url, filename):
+    def readPackagesFile(self, repo, filename):
         """ read the repo packages file and store in the packages db.
         """
         lnum=0;
@@ -264,7 +264,7 @@ class AptInstall:
                     if (len(pkgInfo) > 0):
                         #dbg(self, pp.pformat(pkgInfo));
                         # todo, put the package info into the proper record
-                        self.debDb.addPackage(url, pkgInfo);
+                        self.debDb.addPackage(repo, pkgInfo);
                        
                     lastKey=None;
                     pkgInfo={};   # clear out the previous rec...
@@ -303,8 +303,8 @@ class AptInstall:
             #dbg(self, r)
             for c in r.components:
                 pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
-                dbg(self, 'reading: ' + pkgCache)
-                self.readPackagesFile(r.getUrl(), pkgCache)
+                print('reading: ' + pkgCache)
+                self.readPackagesFile(r, pkgCache)
         #dbg(self, self.debDb)
 
     def topoDecend(self, pkg, visited):
