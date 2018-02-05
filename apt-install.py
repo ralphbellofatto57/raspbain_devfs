@@ -24,11 +24,9 @@ and resolve package dependendies th3e way that apt get does.
 
 
 #import signal
-import subprocess
 import sys
 import argparse;
 import traceback;
-import tempfile;
 import os;
 import inspect;
 import re;
@@ -37,6 +35,9 @@ import pprint as pp;
 import urllib.parse
 import urllib.request
 import collections;
+import subprocess;
+import tempfile;
+import tarfile;
 
 class ExitError(Exception):
     def __init__(self, msg):
@@ -175,7 +176,7 @@ class AptRepo:
         """
         full url for Packages file
         """
-        return(self.urlStr + 'dists/' + 
+        return(self.getUrl() + 'dists/' + 
                self.suite + '/' + 
                component + '/' + 
                self.getDistDir(arch) + '/Packages')
@@ -192,6 +193,20 @@ class AptInstall:
         self.debDb = DebDb();
         self.chkCacheDir()
         self.readAptDir()
+    
+    def runCmd(self, cmd):
+        """ python run command
+            and print output to stdout.
+            """
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,close_fds=True)
+        while True:
+            output = process.stdout.readline()
+            if len(output) == 0 and process.poll() is not None:
+                break
+            if output:
+                print(str(output.strip(),'utf-8'))
+        rc = process.poll()
+        return rc
     
     def chkCacheDir(self):
         if (not os.path.isdir(self.args.cache)):
@@ -233,23 +248,6 @@ class AptInstall:
                         raise ExitError('unrecognized line in {}:{}'.format(fname,lnum))
         #dbg(self, "\n" + pp.pformat(self.aptRepos)+'\n')
     
-    def update(self):
-        """ update -- process the update option
-            """
-        for r in self.aptRepos:
-            #dbg(self, r)
-            for c in r.components:
-                pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
-                pkgDir=os.path.dirname(pkgCache)
-                pkgUrl = r.packagesUrl(c, self.args.arch);
-                print('downloading: {}'.format(pkgUrl));
-                if (not os.path.isdir(pkgDir)):  # create the directory if we don't have one...
-                    os.makedirs(pkgDir)
-                with urllib.request.urlopen(pkgUrl) as f:
-                    s=f.read()
-                    pkgData=s.decode('utf-8');
-                with open(pkgCache, 'w') as f:
-                    f.write(pkgData);
                     
     def readPackagesFile(self, repo, filename):
         """ read the repo packages file and store in the packages db.
@@ -303,7 +301,8 @@ class AptInstall:
             #dbg(self, r)
             for c in r.components:
                 pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
-                print('reading: ' + pkgCache)
+                if (self.args.verbose):
+                    print('reading: ' + pkgCache)
                 self.readPackagesFile(r, pkgCache)
         #dbg(self, self.debDb)
 
@@ -339,30 +338,119 @@ class AptInstall:
         for pkg in pkgList:
             insPkgList.extend(self.topoSortPkgs(pkg, visited))
         return(insPkgList);
-          
+
+    def unarchive(self, fname, fdir='.'):
+        """un archive a file in to a specified directory.
+        """
+        cwd = os.getcwd();
         
+        apath=os.path.abspath(fname);
+        try:
+            os.chdir(fdir);
+            rc=self.runCmd(['ar', 'x', apath])
+            if (rc != 0):
+                raise ExitError('archive command failed')
+        finally:
+            os.chdir(cwd)
+        
+    
+    def update(self):
+        """ update -- process the update option
+            """
+        for r in self.aptRepos:
+            #dbg(self, r)
+            for c in r.components:
+                pkgCache = self.args.cache + '/' + r.packagesFile(c, self.args.arch);
+                pkgDir=os.path.dirname(pkgCache)
+                pkgUrl = r.packagesUrl(c, self.args.arch);
+                
+
+                if (self.args.verbose):
+                    print('downloading: {}'.format(pkgUrl));
+                if self.args.simulate:
+                    continue;
+                if (not os.path.isdir(pkgDir)):  # create the directory if we don't have one...
+                    os.makedirs(pkgDir)
+                with urllib.request.urlopen(pkgUrl) as f:
+                    s=f.read()
+                    pkgData=s.decode('utf-8');
+                with open(pkgCache, 'w') as f:
+                    f.write(pkgData);
+       
+    
     def install(self, pkgList):
         """ install -- process the install step
             """
+        cacheDir=self.args.cache;
         self.readAllRepos();
-        pkgInstallOrder = self.buildInstallList(pkgList);
+        pkgInstallOrder=[];
+        if (self.args.nodeps):
+            pkgInstallOrder.extend(pkgList);
+        else:
+            pkgInstallOrder = self.buildInstallList(pkgList);
+            
+        tempDir = tempfile.TemporaryDirectory();
+        dbg(self, 'tempDir.name={}'.format(tempDir.name))
+
         
         for pkg in pkgInstallOrder:
-            debPkg=self.debDb.getPackage(pkg);
-            dbg(self, "install {}{}".format(debPkg.getUrl(),debPkg.getPkgFileName()))
-            # next steps, download the files, 
-            # then install the files where they belong
+            try:
+                debPkg=self.debDb.getPackage(pkg);
+                print("installing: {}".format(pkg))
+            except KeyError:
+                print("package not found: {}".format(pkg))
+            if self.args.simulate:
+                continue;
+            
+            pkgUrl = debPkg.getUrl() + debPkg.getPkgFileName();
+            pkgFile = '/'.join([cacheDir,debPkg.getPkgFileName()])
+            pkgDir=os.path.dirname(pkgFile)
+
+            if (not os.path.isdir(pkgDir)):  # create the directory if we don't have one...
+                os.makedirs(pkgDir)
+            with urllib.request.urlopen(pkgUrl) as u:
+                f=open(pkgFile,'w+b');
+                while True:
+                    d=u.read(10*1024)
+                    if not d:
+                        break;
+                    f.write(d);
+                u.close();
+                f.close();
         
-                
+            dbg(self, "TODO: install {}  {}".format(pkgUrl, pkgFile));
+            #tarObj = tarfile.open(pkgFile, mode="r:");
+            #dbg(self, "tarObj={}".format(pp.pformat(tarObj)))
+            # debian packages are in AR format.
+
+            tmpDir = tempfile.TemporaryDirectory();
+            #dbg(self, 'tempDir.name={}'.format(tempDir.name))
+            self.unarchive(pkgFile, tmpDir.name)
+            
+            #glob the data*.file, 
+            dataFiles=glob.glob(tmpDir.name + '/' + 'data.tar.*')
+            if len(dataFiles) != 0:
+                ExitError('deb archive missing or malformd data file')
+            dfname=dataFiles[0];
+            tf=tarfile.open(dfname, mode='r:*');
+            #tf.list(verbose=True)
+            tf.extractall(path=self.args.outdir)
+            tf.close();
+            
 
 def main():
-    parser = argparse.ArgumentParser(description='apt-get install for cross environments ')
+    parser = argparse.ArgumentParser(description='apt-get install for cross environments ', 
+                                     add_help=False)
+    parser.add_argument('-h', '--help', 
+                        dest='help', 
+                        help="show help message", 
+                        action='store_true')
     parser.add_argument('-v', '--verbose', 
                         dest='verbose', 
                         help="verbose output", 
                         action='store_true')
     parser.add_argument('-a', '--aptdir', 
-                         help="apt director with sources.list and sources.d files", 
+                         help="apt directory to find sources.list and sources.d files", 
                          dest='aptdir',
                          default="etc/apt")
     parser.add_argument('--arch', 
@@ -371,15 +459,27 @@ def main():
                          default="armhf")
     parser.add_argument('-o', '--outdir', 
                         metavar='"<dir>"', 
-                        help='output directory')
+                        dest='outdir',
+                        help='output directory',
+                        default='rootfs')
     parser.add_argument('-y', '--update', 
                         dest='update', 
                         help="update packages cache", 
                         action='store_true')
-    parser.add_argument('-n', '--noinstall', 
-                        help="don't install",
+    parser.add_argument('-s', '--simulate', 
+                        dest='simulate',
+                        help="No action. Perform a simulation of events that would occur but do not actually change the system",
                         action='store_true',
                         default=False)
+    parser.add_argument('--deps', 
+                        dest='nodeps',
+                        help="nstall dependencies",
+                        action='store_false')
+    parser.add_argument('--nodeps', 
+                        dest='nodeps',
+                        help="don't install dependencies",
+                        action='store_true',
+                        default=True)
     parser.add_argument('-c', '--cache', 
                         dest='cache',
                          help="cache directory to use", 
@@ -395,21 +495,22 @@ def main():
     try:
         args=parser.parse_args(sys.argv[1:])
     except:
-        print("argument error:")
-        parser.print_help();
-        return(1)   
+        print("argument exception:");
+        return(1)
 
+    if (args.help):
+        parser.print_help();
+        return(1)
+        
     pkgList=args.pkglist;
     if (args.pkgsfile is not None):
         pkgList.extend(open(args.pkgsfile).readlines());
     
-    
-    
+       
     aptInstall=AptInstall(args);
     if (args.update):
         aptInstall.update();
-    if (not args.noinstall):
-        aptInstall.install(pkgList);
+    aptInstall.install(pkgList);
     
     return(0)
     

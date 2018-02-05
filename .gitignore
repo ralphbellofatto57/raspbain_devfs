@@ -4,4 +4,5 @@ build
 aptcache
 .DS_Store
 test/
+rootfs/
 
