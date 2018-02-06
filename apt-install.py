@@ -394,7 +394,6 @@ class AptInstall:
             pkgInstallOrder = self.buildInstallList(pkgList);
             
         tempDir = tempfile.TemporaryDirectory();
-        dbg(self, 'tempDir.name={}'.format(tempDir.name))
 
         
         for pkg in pkgInstallOrder:
@@ -402,7 +401,8 @@ class AptInstall:
                 debPkg=self.debDb.getPackage(pkg);
                 print("installing: {}".format(pkg))
             except KeyError:
-                print("package not found: {}".format(pkg))
+                raise ExitError("package not found: {}".format(pkg))
+                
             if self.args.simulate:
                 continue;
             
@@ -480,8 +480,9 @@ def main():
     parser.add_argument('--nodeps', 
                         dest='nodeps',
                         help="don't install dependencies",
-                        action='store_true',
-                        default=True)
+                        action='store_true')
+    parser.set_defaults(nodeps=False)
+
     parser.add_argument('-c', '--cache', 
                         dest='cache',
                          help="cache directory to use", 

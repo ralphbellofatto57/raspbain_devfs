@@ -24,8 +24,8 @@ REPO_PKG_FILES+='${BUILD_DIR}./aptcache/mirrordirector.raspbian.org/raspbian/non
 REPO_PKG_FILES+='${BUILD_DIR}./aptcache/mirrordirector.raspbian.org/raspbian/rpi/binary-armhf/Packages'
 
 PKGS=
-PKGS=pigpio
-
+PKGS+=pigpio
+PKGS+=libboost-system-dev
 
 define FILE_PATH_TARGET
 ${BUILD_DIR}/${1}: ${1}
